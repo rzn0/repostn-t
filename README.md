@@ -56,7 +56,7 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     *(Watch this step carefully for any errors, especially during `numpy` or `opencv-python` installation. Install system prerequisites mentioned in Requirements if needed.)*
 
 4.  **Configure Environment Variables:**
-    *   Copy the example environment file: `cp .env.example .env` (or manually create `.env`).
+    *   Create a new .env file in the root directory of the bot.
     *   **Edit the `.env` file:**
         ```dotenv
         # Discord Bot Token (REQUIRED) - Get from Discord Developer Portal
