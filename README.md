@@ -11,7 +11,7 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
 *   **Repost Detection:** Detects reposts of:
     *   Images (PNG, JPG, WEBP, BMP)
     *   GIFs
-    *   Video Files (first frame analysis - requires OpenCV & FFmpeg)
+    *   Video Files (first non-black frame, middle frame, and last frame analysis - requires OpenCV & FFmpeg)
 *   **Perceptual Hashing:** Uses image hashing (specifically pHash via `ImageHash`) to identify visually similar content, making it resilient to minor edits, format changes, and compression differences.
 *   **Duplicate Handling:**
     *   Replies to the repost message, linking to the original post.
