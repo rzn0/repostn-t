@@ -3,32 +3,33 @@
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, video first frames) within your server channels.
+A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, videos) within your server channels, redirecting alerts to a designated channel after a one-time setup.
 
 ## Features
 
-*   **Media Monitoring:** Listens to messages in configured channels.
+*   **Media Monitoring:** Listens to messages containing media across server channels where it has permission.
 *   **Repost Detection:** Detects reposts of:
-    *   Images (PNG, JPG, WEBP, BMP)
-    *   GIFs
-    *   Video Files (first non-black frame, middle frame, and last frame analysis - requires OpenCV & FFmpeg)
-*   **Perceptual Hashing:** Uses image hashing (specifically pHash via `ImageHash`) to identify visually similar content, making it resilient to minor edits, format changes, and compression differences.
-*   **Duplicate Handling:**
-    *   Replies to the repost message, linking to the original post.
-    *   Optionally deletes the repost message.
-    *   Mentions ("shames") the user who reposted.
-*   **Database:** Stores media hashes (using SQLite) to remember previously posted content within a server.
-*   **Configurable:** Settings like hash sensitivity, file size limits, and logging level can be adjusted via an environment file.
+    *   Images (PNG, JPG, JPEG, WEBP, BMP, GIF)
+    *   Video Files (analyzes first non-black, middle, and last frames - requires OpenCV)
+*   **Perceptual Hashing:** Uses image hashing (specifically pHash via `ImageHash` and Pillow) to identify visually similar content, making it resilient to minor edits, format changes, and compression differences.
+*   **Mandatory Server Setup:** Requires an administrator to designate a specific channel for repost alerts using a simple command (`!setalertchannel` by default) before the bot takes action on reposts.
+*   **Dedicated Alert Channel:** Once configured, all repost alerts ("shame messages") are sent to the designated channel, keeping other channels cleaner.
+*   **Duplicate Handling (Post-Setup):**
+    *   Sends an alert message to the configured alert channel, mentioning the reposter and linking to the original post.
+    *   Deletes the repost message from its original channel (requires `Manage Messages` permission there).
+*   **Database:** Stores media hashes (using SQLite) to remember previously posted content within a server (`media_hashes` table) and the configured alert channel (`guild_config` table).
+*   **Configurable:** Settings like hash sensitivity, file size limits, command prefix, and logging level can be adjusted via an environment file (`.env`).
 
 ## Requirements
 
 *   **Python 3.8+**
 *   **Pip** (Python package installer)
 *   **Git** (for cloning the repository)
+*   **OpenCV Python Bindings:** Required for video frame analysis. Usually installed via pip (`opencv-python`), but may require system dependencies (see Step 3 below).
 *   **FFmpeg:** Required by OpenCV for reliable video decoding. Install system-wide:
     *   **Debian/Ubuntu/Kali:** `sudo apt update && sudo apt install ffmpeg -y`
     *   **macOS (Homebrew):** `brew install ffmpeg`
-    *   **Windows:** Download from the official FFmpeg website and add it to your system's PATH.
+    *   **Windows:** Download from the official FFmpeg website and add `ffmpeg.exe` to your system's PATH.
 *   **(Potentially) Build Tools:** Installing `opencv-python` and `numpy` might require system build tools if pre-built wheels aren't available for your system/architecture (especially on Raspberry Pi/ARM):
     *   **Debian/Ubuntu/Kali:** `sudo apt install build-essential cmake pkg-config python3-dev`
     *   May also need image format libraries: `sudo apt install libjpeg-dev libpng-dev libtiff-dev libgtk-3-dev libatlas-base-dev gfortran` (Install as needed based on pip errors).
@@ -50,6 +51,18 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     ```
 
 3.  **Install Dependencies:**
+    *(Create a `requirements.txt` file in the bot's root directory with the following content first):*
+    ```txt
+    # requirements.txt
+    nextcord==3.1.0
+    numpy
+    opencv-python
+    Pillow
+    ImageHash
+    python-dotenv
+    aiohttp
+    ```
+    *Then run:*
     ```bash
     pip install --upgrade pip
     pip install -r requirements.txt
@@ -57,7 +70,7 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     *(Watch this step carefully for any errors, especially during `numpy` or `opencv-python` installation. Install system prerequisites mentioned in Requirements if needed.)*
 
 4.  **Configure Environment Variables:**
-    *   Create a new .env file in the root directory of the bot.
+    *   Create a new `.env` file in the root directory of the bot.
     *   **Edit the `.env` file:**
         ```dotenv
         # Discord Bot Token (REQUIRED) - Get from Discord Developer Portal
@@ -74,11 +87,14 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
         # Max file size (MB) to process
         MAX_FILE_SIZE_MB=30
 
-        # Bot command prefix (if commands are added later)
+        # Bot command prefix (Used for the setup command)
         BOT_PREFIX="!"
+
+        # Video Processing - Black Frame Detection Threshold (Lower = stricter black detection)
+        BLACK_FRAME_THRESHOLD=10
         ```
     *   **Replace `YOUR_BOT_TOKEN_GOES_HERE` with your actual bot token.**
-    *   Adjust other settings as needed.
+    *   Adjust other settings as needed (the defaults are generally reasonable).
     *   **IMPORTANT:** Ensure the `.env` file is listed in your `.gitignore` file and **never commit it** to version control.
 
 5.  **Discord Application Setup:**
@@ -87,32 +103,28 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     *   Go to the **Bot** tab on the left sidebar.
     *   Click **Add Bot** and confirm.
     *   **Token:** Under the bot's username, click **Reset Token** (or **View Token** if visible) to get your bot token. Copy this token and paste it into your `.env` file for `DISCORD_BOT_TOKEN`. **Keep this token secret!**
-    *   **Privileged Gateway Intents:** Scroll down and **ENABLE** the **`MESSAGE CONTENT INTENT`**. This is **mandatory** for the bot to read message attachments and embeds. Click **Save Changes**.
+    *   **Privileged Gateway Intents:** Scroll down and **ENABLE** the **`MESSAGE CONTENT INTENT`**. This is **mandatory** for the bot to read commands and potentially message content in the future. Click **Save Changes**.
 
 6.  **Invite Bot to Your Server:**
     *   Go back to your Application in the Developer Portal.
     *   Go to **OAuth2 -> URL Generator**.
     *   Under **Scopes**, select `bot`.
-    *   Under **Bot Permissions**, select the following:
-        *   `View Channels` (Read Messages)
-        *   `Send Messages`
-        *   `Manage Messages` (To delete reposts)
-        *   `Read Message History`
-        *   *(Optional)* `Embed Links` (For cleaner output)
+    *   Under **Bot Permissions**, select the following (crucial for operation):
+        *   `View Channels` (Implies Read Messages)
+        *   `Send Messages` (Needed for alerts and setup messages)
+        *   `Manage Messages` (Needed to delete reposts)
+        *   `Read Message History` (Needed for context and finding original messages)
+        *   *(Recommended)* `Embed Links` (For potentially nicer alert formatting later)
     *   Copy the **Generated URL** at the bottom.
     *   Paste the URL into your web browser and select the server you want to add the bot to. Authorize the permissions.
 
-7.  **Database Setup (Manual - Recommended for Stability):**
-    The bot attempts to create the database schema on startup, but this can fail due to permissions or other issues. It's recommended to create it manually once before the first run, especially if you encounter "no such table" errors.
-    *   Ensure you are in the bot's main directory (`/home/admin/repostBot/`).
-    *   Make sure the `db` directory exists and is writable by the user running the bot (see Requirements/Permissions).
-    *   Run the database script directly:
-        ```bash
-        # Ensure your virtual environment is active if using one
-        python database.py
-        ```
-    *   Check the output for `--- Database setup script finished successfully. ---`. If errors occur, address them (likely permissions).
-    *   You can verify with `sqlite3 db/repost_hashes.db ".schema media_hashes"`.
+7.  **Initial Bot Run & Setup (Mandatory):**
+    *   Run the bot for the first time (see next section). It will automatically create the database file (`db/repost_hashes.db`) and tables if they don't exist (check console logs for success or errors).
+    *   **After the bot is online:** An administrator with **"Manage Server"** permission must go to the specific text channel where they want repost alerts to be sent.
+    *   In that channel, run the setup command (default: `!setalertchannel`).
+    *   The bot **must** have `Send Messages` and `Read Message History` permissions in that chosen alert channel. It will check this when you run the command.
+    *   The bot will confirm if the channel was set successfully. Repost detection and handling will now be active for the server.
+    *   If a repost is detected *before* setup is complete, the bot will post a reminder message in the channel where the repost occurred, prompting an admin to run the setup command.
 
 ## Running the Bot
 
@@ -123,23 +135,24 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     ```
 2.  **Run the Python script:**
     ```bash
-    python bot.py
+    python repostBot.py
     ```
-3.  The bot should log into Discord and print readiness messages to the console. Check the console for errors if it doesn't start correctly.
+3.  The bot should log into Discord and print readiness messages to the console. Check the console for errors if it doesn't start correctly (especially database errors on the first run).
+4.  **Remember to perform the mandatory `!setalertchannel` setup step** (see step 7 above) after the bot is running.
 
 ## Running with PM2 (Optional)
 
 If you're using PM2 on your server/Raspberry Pi:
 
-1.  **Make sure you are in the bot's directory:** `cd /path/to/your/repost-bot`
+1.  **Make sure you are in the bot's directory:** `cd /path/to/your/discord-repost-bot`
 2.  **Start the bot:**
     *   **If NOT using a venv:**
         ```bash
-        pm2 start bot.py --name repostBot --interpreter python3
+        pm2 start repostBot.py --name repostBot --interpreter python3
         ```
     *   **If using a venv:** Use the full path to the Python interpreter inside the venv.
         ```bash
-        pm2 start venv/bin/python --name repostBot -- bot.py
+        pm2 start venv/bin/python --name repostBot -- repostBot.py
         # Note the '--' separating pm2 options from the script and its arguments
         ```
 3.  **Monitor Logs:**
@@ -155,26 +168,31 @@ If you're using PM2 on your server/Raspberry Pi:
 
 ## How it Works (Briefly)
 
-1.  **Event Listener:** The bot listens for new messages (`on_message`).
-2.  **Media Check:** It checks if the message contains supported image, GIF, or video attachments/embeds.
-3.  **Download:** It downloads the media content into memory (or temporarily to disk for video processing).
+1.  **Event Listener:** The bot listens for new messages (`on_message`). If a message starts with the command prefix, it processes it as a command (`!setalertchannel`).
+2.  **Media Check:** If not a command, it checks if the message contains supported image, GIF, or video attachments/embeds.
+3.  **Download:** It downloads the media content into memory.
 4.  **Hashing:**
-    *   **Images/GIFs:** Calculates a perceptual hash (pHash) of the image (or the first frame of a GIF) using `ImageHash` and `Pillow`.
-    *   **Videos:** Extracts the first frame using `OpenCV` (requires FFmpeg backend), converts it to an image, and calculates its pHash.
-5.  **Database Query:** It queries the SQLite database (`db/repost_hashes.db`) for existing hashes within the same server (guild) that are visually similar (Hamming distance <= `SIMILARITY_THRESHOLD`).
+    *   **Images/GIFs:** Calculates a perceptual hash (pHash) using `ImageHash` and `Pillow`.
+    *   **Videos:** Extracts the first non-black, middle, and last frames using `OpenCV`, converts them, and calculates their pHashes.
+5.  **Database Query:** It queries the SQLite database for existing hashes within the same server (guild) that are visually similar (Hamming distance <= `SIMILARITY_THRESHOLD`), ordered by timestamp.
 6.  **Action:**
-    *   **If a similar hash is found:** It replies to the new message, linking the original post, and deletes the new message (requires `Manage Messages` permission).
-    *   **If no similar hash is found:** It adds the new hash, message details, and timestamp to the database.
+    *   **If a similar hash is found:** It calls the `handle_repost` function.
+    *   **Inside `handle_repost`:**
+        *   It first checks the database (`guild_config` table) to see if an alert channel has been configured for this server.
+        *   **If NOT configured:** It sends a temporary "Setup Required" message to the channel where the repost occurred and takes no further action.
+        *   **If configured:** It attempts to fetch the configured alert channel, validates permissions, sends the alert message there (mentioning the user, linking the original), and then deletes the repost message from its original channel (requires `Manage Messages` permission there).
+    *   **If no similar hash is found:** It adds the new hash(es), message details, and timestamp to the database (`media_hashes` table).
 
 ## Limitations
 
 *   **Perceptual Hashing Isn't Perfect:** While good, pHash can occasionally have:
     *   **False Positives:** Flagging two different but visually simple/similar images as reposts.
-    *   **False Negatives:** Missing reposts if the image/video is heavily edited, cropped significantly, mirrored, or has large overlays added. The `SIMILARITY_THRESHOLD` needs tuning for your server's content.
-*   **Video Processing:** Only the **first frame** of a video is analyzed. Videos that are reposted but trimmed to start at a different point will likely not be detected. Robust video fingerprinting is computationally expensive and complex.
-*   **Resource Usage:** Processing images and especially videos requires CPU and RAM. Running on very low-resource devices (like older Raspberry Pi models) with high message volume might lead to performance issues or delays. OpenCV can be resource-intensive.
-*   **SQLite Scalability:** SQLite is simple but may become slow on extremely large servers with millions of stored hashes. A different database (like PostgreSQL) might be better for massive scale.
+    *   **False Negatives:** Missing reposts if the image/video is heavily edited (cropped significantly, mirrored, large overlays, heavy filters). The `SIMILARITY_THRESHOLD` needs tuning.
+*   **Video Processing:** Analyzes only keyframes (first non-black, middle, last). Won't reliably detect reposts of heavily trimmed videos, sped-up/slowed-down videos, or videos with significant filters/overlays applied differently across frames. It's not full video fingerprinting.
+*   **Resource Usage:** Processing images and especially videos requires CPU and RAM. OpenCV and hashing multiple frames can be resource-intensive on low-power devices or high-traffic servers.
+*   **SQLite Scalability:** SQLite is simple but may become slow on extremely large servers with millions of stored hashes.
 *   **Ephemeral Media:** Doesn't handle media that disappears quickly (e.g., certain image hosts or edited messages where the original attachment is removed before processing).
+*   **Setup Requirement:** Bot functionality is paused until the mandatory setup command is run.
 
 ## Contributing
 
