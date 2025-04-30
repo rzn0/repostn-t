@@ -51,18 +51,6 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     ```
 
 3.  **Install Dependencies:**
-    *(Create a `requirements.txt` file in the bot's root directory with the following content first):*
-    ```txt
-    # requirements.txt
-    nextcord==3.1.0
-    numpy
-    opencv-python
-    Pillow
-    ImageHash
-    python-dotenv
-    aiohttp
-    ```
-    *Then run:*
     ```bash
     pip install --upgrade pip
     pip install -r requirements.txt
