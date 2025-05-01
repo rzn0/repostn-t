@@ -3,21 +3,22 @@
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, videos) within your server channels, redirecting alerts to a designated channel after a one-time setup.
+A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, videos) within your server channels. It requires a one-time setup to designate an alert channel and allows whitelisting specific channels where reposts are permitted.
 
 ## Features
 
-*   **Media Monitoring:** Listens to messages containing media across server channels where it has permission.
+*   **Media Monitoring:** Listens to messages containing media across server channels where it has permission and is not whitelisted.
 *   **Repost Detection:** Detects reposts of:
     *   Images (PNG, JPG, JPEG, WEBP, BMP, GIF)
     *   Video Files (analyzes first non-black, middle, and last frames - requires OpenCV)
-*   **Perceptual Hashing:** Uses image hashing (specifically pHash via `ImageHash` and Pillow) to identify visually similar content, making it resilient to minor edits, format changes, and compression differences.
-*   **Mandatory Server Setup:** Requires an administrator to designate a specific channel for repost alerts using a simple command (`!setalertchannel` by default) before the bot takes action on reposts.
-*   **Dedicated Alert Channel:** Once configured, all repost alerts ("shame messages") are sent to the designated channel, keeping other channels cleaner.
-*   **Duplicate Handling (Post-Setup):**
+*   **Perceptual Hashing:** Uses image hashing (pHash via `ImageHash` and Pillow) to identify visually similar content, resilient to minor edits, format changes, and compression.
+*   **Mandatory Server Setup:** Requires an administrator to designate a specific channel for repost alerts using the `!setalertchannel` command before the bot actively handles reposts.
+*   **Dedicated Alert Channel:** Once configured, all repost alerts are sent to the designated channel, keeping others cleaner.
+*   **Channel Whitelisting:** Administrators can whitelist specific channels using the `!whitelist` command, preventing the bot from checking for reposts in those channels. Whitelisting is managed via the database.
+*   **Duplicate Handling (Post-Setup & Non-Whitelisted):**
     *   Sends an alert message to the configured alert channel, mentioning the reposter and linking to the original post.
     *   Deletes the repost message from its original channel (requires `Manage Messages` permission there).
-*   **Database:** Stores media hashes (using SQLite) to remember previously posted content within a server (`media_hashes` table) and the configured alert channel (`guild_config` table).
+*   **Database:** Stores media hashes (`media_hashes`), alert channel configuration (`guild_config`), and channel whitelist status (`channel_whitelist`) using SQLite.
 *   **Configurable:** Settings like hash sensitivity, file size limits, command prefix, and logging level can be adjusted via an environment file (`.env`).
 
 ## Requirements
@@ -43,7 +44,6 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     ```
 
 2.  **Create a Virtual Environment (Recommended):**
-    This isolates dependencies for this project.
     ```bash
     python3 -m venv venv
     source venv/bin/activate  # Linux/macOS
@@ -58,7 +58,7 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     *(Watch this step carefully for any errors, especially during `numpy` or `opencv-python` installation. Install system prerequisites mentioned in Requirements if needed.)*
 
 4.  **Configure Environment Variables:**
-    *   Create a new `.env` file in the root directory of the bot.
+    *   Copy the example environment file (if provided, e.g., `.env.example`) or create a new `.env` file in the root directory.
     *   **Edit the `.env` file:**
         ```dotenv
         # Discord Bot Token (REQUIRED) - Get from Discord Developer Portal
@@ -75,48 +75,44 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
         # Max file size (MB) to process
         MAX_FILE_SIZE_MB=30
 
-        # Bot command prefix (Used for the setup command)
+        # Bot command prefix (Used for setup/whitelist commands)
         BOT_PREFIX="!"
 
         # Video Processing - Black Frame Detection Threshold (Lower = stricter black detection)
         BLACK_FRAME_THRESHOLD=10
         ```
     *   **Replace `YOUR_BOT_TOKEN_GOES_HERE` with your actual bot token.**
-    *   Adjust other settings as needed (the defaults are generally reasonable).
+    *   Adjust other settings as needed.
     *   **IMPORTANT:** Ensure the `.env` file is listed in your `.gitignore` file and **never commit it** to version control.
 
 5.  **Discord Application Setup:**
     *   Go to the [Discord Developer Portal](https://discord.com/developers/applications).
     *   Create a **New Application**.
-    *   Go to the **Bot** tab on the left sidebar.
-    *   Click **Add Bot** and confirm.
-    *   **Token:** Under the bot's username, click **Reset Token** (or **View Token** if visible) to get your bot token. Copy this token and paste it into your `.env` file for `DISCORD_BOT_TOKEN`. **Keep this token secret!**
-    *   **Privileged Gateway Intents:** Scroll down and **ENABLE** the **`MESSAGE CONTENT INTENT`**. This is **mandatory** for the bot to read commands and potentially message content in the future. Click **Save Changes**.
+    *   Go to the **Bot** tab and click **Add Bot**.
+    *   **Token:** Get your bot token (Reset/View Token) and put it in the `.env` file. **Keep this token secret!**
+    *   **Privileged Gateway Intents:** Scroll down and **ENABLE** the **`MESSAGE CONTENT INTENT`**. Click **Save Changes**.
 
 6.  **Invite Bot to Your Server:**
-    *   Go back to your Application in the Developer Portal.
     *   Go to **OAuth2 -> URL Generator**.
-    *   Under **Scopes**, select `bot`.
-    *   Under **Bot Permissions**, select the following (crucial for operation):
-        *   `View Channels` (Implies Read Messages)
-        *   `Send Messages` (Needed for alerts and setup messages)
-        *   `Manage Messages` (Needed to delete reposts)
-        *   `Read Message History` (Needed for context and finding original messages)
-        *   *(Recommended)* `Embed Links` (For potentially nicer alert formatting later)
-    *   Copy the **Generated URL** at the bottom.
-    *   Paste the URL into your web browser and select the server you want to add the bot to. Authorize the permissions.
+    *   **Scopes:** Select `bot`.
+    *   **Bot Permissions:** Select:
+        *   `View Channels` (Read Messages)
+        *   `Send Messages`
+        *   `Manage Messages`
+        *   `Read Message History`
+        *   *(Recommended)* `Embed Links`
+    *   Copy the **Generated URL** and use it to add the bot to your server.
 
 7.  **Initial Bot Run & Setup (Mandatory):**
-    *   Run the bot for the first time (see next section). It will automatically create the database file (`db/repost_hashes.db`) and tables if they don't exist (check console logs for success or errors).
-    *   **After the bot is online:** An administrator with **"Manage Server"** permission must go to the specific text channel where they want repost alerts to be sent.
+    *   Run the bot (see next section). It automatically creates/updates the database (`db/repost_hashes.db`) on startup. Check logs for success/errors.
+    *   **After the bot is online:** An administrator with **"Manage Server"** permission must go to the **text channel** where they want repost alerts sent.
     *   In that channel, run the setup command (default: `!setalertchannel`).
-    *   The bot **must** have `Send Messages` and `Read Message History` permissions in that chosen alert channel. It will check this when you run the command.
-    *   The bot will confirm if the channel was set successfully. Repost detection and handling will now be active for the server.
-    *   If a repost is detected *before* setup is complete, the bot will post a reminder message in the channel where the repost occurred, prompting an admin to run the setup command.
+    *   The bot needs `Send Messages` and `Read Message History` in that channel. It will confirm success. Repost handling is now active.
+    *   Optionally, use the `!whitelist` command in channels where you want to disable repost checks entirely.
 
 ## Running the Bot
 
-1.  **Activate Virtual Environment** (if you created one):
+1.  **Activate Virtual Environment** (if used):
     ```bash
     source venv/bin/activate # Linux/macOS
     # venv\Scripts\activate   # Windows
@@ -125,63 +121,48 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     ```bash
     python repostBot.py
     ```
-3.  The bot should log into Discord and print readiness messages to the console. Check the console for errors if it doesn't start correctly (especially database errors on the first run).
-4.  **Remember to perform the mandatory `!setalertchannel` setup step** (see step 7 above) after the bot is running.
+3.  Check console logs for readiness messages and errors.
+4.  **Remember the mandatory `!setalertchannel` step** if this is the first time running the bot in a server.
 
-## Running with PM2 (Optional)
+## Commands
 
-If you're using PM2 on your server/Raspberry Pi:
+*(Default prefix is `!`. Requires "Manage Server" permission.)*
 
-1.  **Make sure you are in the bot's directory:** `cd /path/to/your/discord-repost-bot`
-2.  **Start the bot:**
-    *   **If NOT using a venv:**
-        ```bash
-        pm2 start repostBot.py --name repostBot --interpreter python3
-        ```
-    *   **If using a venv:** Use the full path to the Python interpreter inside the venv.
-        ```bash
-        pm2 start venv/bin/python --name repostBot -- repostBot.py
-        # Note the '--' separating pm2 options from the script and its arguments
-        ```
-3.  **Monitor Logs:**
-    ```bash
-    pm2 logs repostBot
-    ```
-4.  **Other PM2 Commands:**
-    *   `pm2 stop repostBot`
-    *   `pm2 restart repostBot`
-    *   `pm2 delete repostBot`
-    *   `pm2 save` (To save the process list for restarts)
-    *   `pm2 startup` (To make PM2 automatically start bots on system reboot)
+*   `setalertchannel` (Alias: `setalerts`)
+    *   **Usage:** Run this command **in the text channel** where you want repost alerts delivered.
+    *   **Action:** Configures the bot to send all future repost alerts for this server to the channel where the command was run. This is **required** to activate the bot's alert/delete functionality.
+*   `whitelist [channel]` (Alias: `wl`)
+    *   **Usage:** Run in a channel (`!whitelist`) or specify one (`!whitelist #channel-name` or `!whitelist <channel_id>`).
+    *   **Action:** Adds the target channel to the whitelist. The bot will ignore all messages in this channel for repost checks.
+*   `unwhitelist [channel]` (Alias: `unwl`)
+    *   **Usage:** Run in a channel (`!unwhitelist`) or specify one (`!unwhitelist #channel-name` or `!unwhitelist <channel_id>`).
+    *   **Action:** Removes the target channel from the whitelist, re-enabling repost checks there.
 
 ## How it Works (Briefly)
 
-1.  **Event Listener:** The bot listens for new messages (`on_message`). If a message starts with the command prefix, it processes it as a command (`!setalertchannel`).
-2.  **Media Check:** If not a command, it checks if the message contains supported image, GIF, or video attachments/embeds.
-3.  **Download:** It downloads the media content into memory.
-4.  **Hashing:**
-    *   **Images/GIFs:** Calculates a perceptual hash (pHash) using `ImageHash` and `Pillow`.
-    *   **Videos:** Extracts the first non-black, middle, and last frames using `OpenCV`, converts them, and calculates their pHashes.
-5.  **Database Query:** It queries the SQLite database for existing hashes within the same server (guild) that are visually similar (Hamming distance <= `SIMILARITY_THRESHOLD`), ordered by timestamp.
-6.  **Action:**
-    *   **If a similar hash is found:** It calls the `handle_repost` function.
+1.  **Event Listener:** Listens for `on_message`.
+2.  **Command Check:** If the message starts with the prefix, attempts to process it as a command (`setalertchannel`, `whitelist`, `unwhitelist`).
+3.  **Whitelist Check:** If not a command, checks if the message's channel is in the database whitelist for the server. If yes, ignores the message.
+4.  **Media Check:** If not whitelisted, checks for supported media attachments/embeds.
+5.  **Download & Hash:** Downloads valid media. Calculates pHash for images/GIFs. Extracts and hashes first non-black, middle, and last frames for videos (using OpenCV).
+6.  **Database Query:** Queries the SQLite database (`media_hashes` table) for visually similar hashes (Hamming distance <= `SIMILARITY_THRESHOLD`) within the same server.
+7.  **Action:**
+    *   **If a similar hash is found:** Calls `handle_repost`.
     *   **Inside `handle_repost`:**
-        *   It first checks the database (`guild_config` table) to see if an alert channel has been configured for this server.
-        *   **If NOT configured:** It sends a temporary "Setup Required" message to the channel where the repost occurred and takes no further action.
-        *   **If configured:** It attempts to fetch the configured alert channel, validates permissions, sends the alert message there (mentioning the user, linking the original), and then deletes the repost message from its original channel (requires `Manage Messages` permission there).
-    *   **If no similar hash is found:** It adds the new hash(es), message details, and timestamp to the database (`media_hashes` table).
+        *   Checks the `guild_config` table for the configured alert channel ID.
+        *   **If NOT configured:** Sends a "Setup Required" message to the repost channel and stops.
+        *   **If configured:** Sends the alert to the configured channel and deletes the repost from its original channel.
+    *   **If no similar hash is found:** Adds the new hash(es) to the `media_hashes` table.
 
 ## Limitations
 
-*   **Perceptual Hashing Isn't Perfect:** While good, pHash can occasionally have:
-    *   **False Positives:** Flagging two different but visually simple/similar images as reposts.
-    *   **False Negatives:** Missing reposts if the image/video is heavily edited (cropped significantly, mirrored, large overlays, heavy filters). The `SIMILARITY_THRESHOLD` needs tuning.
-*   **Video Processing:** Analyzes only keyframes (first non-black, middle, last). Won't reliably detect reposts of heavily trimmed videos, sped-up/slowed-down videos, or videos with significant filters/overlays applied differently across frames. It's not full video fingerprinting.
-*   **Resource Usage:** Processing images and especially videos requires CPU and RAM. OpenCV and hashing multiple frames can be resource-intensive on low-power devices or high-traffic servers.
-*   **SQLite Scalability:** SQLite is simple but may become slow on extremely large servers with millions of stored hashes.
-*   **Ephemeral Media:** Doesn't handle media that disappears quickly (e.g., certain image hosts or edited messages where the original attachment is removed before processing).
-*   **Setup Requirement:** Bot functionality is paused until the mandatory setup command is run.
+*   **Hashing Imperfections:** pHash isn't foolproof against heavy edits, crops, mirrors, or overlays. `SIMILARITY_THRESHOLD` requires tuning.
+*   **Video Analysis:** Analyzes keyframes only. Doesn't detect heavily trimmed/altered videos reliably.
+*   **Resource Usage:** Media processing, especially multi-frame video hashing with OpenCV, can be CPU/RAM intensive.
+*   **SQLite Scalability:** May slow down with millions of hashes.
+*   **Setup Requirement:** Core functionality paused until `!setalertchannel` is used.
+*   **Whitelist Management:** Whitelist is managed per-channel via commands and stored in the database.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs or feature suggestions.
+Contributions welcome! Please submit pull requests or open issues.
