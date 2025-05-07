@@ -3,6 +3,7 @@ import sqlite3
 import os
 import logging
 import time
+import imagehash # Ensure this is imported
 from imagehash import ImageHash, hex_to_hash
 from typing import Optional, Dict, Any, List, Union, Set, Tuple
 
@@ -60,13 +61,20 @@ def setup_database():
         conn.commit(); log.info("DB_SETUP: Transaction committed."); log.info("--- Database Setup Function Completed Successfully ---")
     except Exception as e:
         log.critical(f"--- Database Setup Function FAILED: {e} ---", exc_info=True)
-        if conn: try: conn.rollback(); log.warning("DB_SETUP: Attempted rollback.") except Exception as rb_e: log.error(f"DB_SETUP: Rollback failed: {rb_e}")
+        if conn:
+            try:
+                conn.rollback()
+                log.warning("DB_SETUP: Attempted rollback due to setup failure.")
+            except Exception as rb_e:
+                log.error(f"DB_SETUP: Rollback attempt failed: {rb_e}")
         raise
-    finally: _close_connection(conn)
+    finally:
+        _close_connection(conn)
+        log.debug("DB_SETUP: Connection closed in finally block.")
 
 
 def add_hash(guild_id: int, channel_id: int, message_id: int, author_id: int,
-             hashes: Union[imagehash.ImageHash, List[imagehash.ImageHash]], media_url: str):
+             hashes: Union[ImageHash, List[ImageHash]], media_url: str):
     conn = _get_connection();
     if not conn: log.error(f"DB_ADD_HASH: Failed connection MsgID {message_id}."); return
     hash_hex_string: str = ""
@@ -74,28 +82,34 @@ def add_hash(guild_id: int, channel_id: int, message_id: int, author_id: int,
         valid_hashes = [str(h) for h in hashes if h is not None]
         if not valid_hashes: _close_connection(conn); return
         hash_hex_string = ";".join(valid_hashes)
-    elif isinstance(hashes, imagehash.ImageHash): hash_hex_string = str(hashes)
+    elif isinstance(hashes, ImageHash): hash_hex_string = str(hashes)
     else: log.error(f"DB_ADD_HASH: Invalid hash type MsgID {message_id}."); _close_connection(conn); return
     timestamp = int(time.time())
     try:
+        conn.execute("BEGIN;")
         cursor = conn.cursor()
         cursor.execute(f"INSERT INTO {HASH_TABLE_NAME} (guild_id, channel_id, message_id, author_id, hash_hex, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (guild_id, channel_id, message_id, author_id, hash_hex_string, media_url, timestamp))
         conn.commit(); log.info(f"DB_ADD_HASH: Added MsgID {message_id}.")
-    except sqlite3.IntegrityError: log.warning(f"DB_ADD_HASH: Hash MsgID {message_id} already exists.")
+    except sqlite3.IntegrityError:
+        log.warning(f"DB_ADD_HASH: Hash MsgID {message_id} already exists.")
     except Exception as e:
         log.error(f"DB_ADD_HASH: Error MsgID {message_id}: {e}", exc_info=True)
-        try: conn.rollback()
-        except Exception as rb_e: log.error(f"DB_ADD_HASH: Rollback failed: {rb_e}")
+        if conn:
+            try:
+                conn.rollback()
+                log.warning(f"DB_ADD_HASH: Rolled back transaction for MsgID {message_id} due to error.")
+            except Exception as rb_e:
+                 log.error(f"DB_ADD_HASH: Rollback failed: {rb_e}")
     finally: _close_connection(conn)
 
-def find_similar_hash(guild_id: int, current_hashes: Union[imagehash.ImageHash, List[imagehash.ImageHash]], threshold: int) -> Optional[Dict[str, Any]]:
+def find_similar_hash(guild_id: int, current_hashes: Union[ImageHash, List[ImageHash]], threshold: int) -> Optional[Dict[str, Any]]:
     conn = _get_connection();
     if not conn: log.error(f"DB_FIND_HASH: Failed connection Guild {guild_id}."); return None
     found_match = None
-    target_hashes: List[imagehash.ImageHash] = []
-    if isinstance(current_hashes, list): target_hashes = [h for h in current_hashes if isinstance(h, imagehash.ImageHash)]
-    elif isinstance(current_hashes, imagehash.ImageHash): target_hashes = [current_hashes]
+    target_hashes: List[ImageHash] = []
+    if isinstance(current_hashes, list): target_hashes = [h for h in current_hashes if isinstance(h, ImageHash)]
+    elif isinstance(current_hashes, ImageHash): target_hashes = [current_hashes]
     if not target_hashes: log.warning(f"DB_FIND_HASH: No valid hashes Guild {guild_id}."); _close_connection(conn); return None
     log.info(f"DB_FIND_HASH: Searching Guild {guild_id}. Threshold: {threshold}")
     try:
@@ -107,6 +121,7 @@ def find_similar_hash(guild_id: int, current_hashes: Union[imagehash.ImageHash, 
         for row in rows:
             db_hashes_hex_list = [h for h in row["hash_hex"].split(';') if h]
             for db_hash_hex in db_hashes_hex_list:
+                target_hash = None
                 try:
                     db_hash = hex_to_hash(db_hash_hex)
                     for target_hash in target_hashes:
@@ -117,7 +132,7 @@ def find_similar_hash(guild_id: int, current_hashes: Union[imagehash.ImageHash, 
                             found_match = {"message_id": row["message_id"], "channel_id": row["channel_id"], "author_id": row["author_id"], "timestamp": row["timestamp"], "link": original_link, "similarity": difference, "matched_db_hash": db_hash_hex, "matched_target_hash": str(target_hash), "original_media_url": row["media_url"]}
                             _close_connection(conn); return found_match
                 except ValueError: log.warning(f"DB_FIND_HASH: Invalid hash '{db_hash_hex}' in DB msg {row['message_id']}.")
-                except Exception as e: log.error(f"DB_FIND_HASH: Error comparing hash (Target:{target_hash}/DB:{db_hash_hex}): {e}", exc_info=True)
+                except Exception as e: log.error(f"DB_FIND_HASH: Error comparing DB hash '{db_hash_hex}' (MsgID {row['message_id']}): {e}", exc_info=True)
     except Exception as e: log.error(f"DB_FIND_HASH: Unexpected error during search: {e}", exc_info=True)
     finally: _close_connection(conn)
     if not found_match: log.info("DB_FIND_HASH: Search finished. No match found.")
@@ -128,14 +143,19 @@ def set_alert_channel(guild_id: int, channel_id: Optional[int]):
     if not conn: log.error(f"DB_SET_ALERT_CHANNEL: Failed connection Guild {guild_id}."); return False
     success = False
     try:
+        conn.execute("BEGIN IMMEDIATE;")
         cursor = conn.cursor()
         cursor.execute(f"INSERT OR REPLACE INTO {CONFIG_TABLE_NAME} (guild_id, alert_channel_id) VALUES (?, ?)", (guild_id, channel_id))
         conn.commit(); success = True
         log.info(f"DB_SET_ALERT_CHANNEL: Alert channel Guild {guild_id} set to {channel_id}.")
     except Exception as e:
         log.error(f"DB_SET_ALERT_CHANNEL: Error G:{guild_id}: {e}", exc_info=True)
-        try: conn.rollback()
-        except Exception as rb_e: log.error(f"DB_SET_ALERT_CHANNEL: Rollback failed: {rb_e}")
+        if conn:
+            try:
+                conn.rollback()
+                log.warning(f"DB_SET_ALERT_CHANNEL: Rolled back G:{guild_id}.")
+            except Exception as rb_e:
+                log.error(f"DB_SET_ALERT_CHANNEL: Rollback failed: {rb_e}")
     finally: _close_connection(conn)
     return success
 
@@ -157,14 +177,22 @@ def add_whitelist_channel(guild_id: int, channel_id: int) -> bool:
     if not conn: log.error(f"DB_WL_ADD: Failed connection G:{guild_id}, C:{channel_id}."); return False
     success = False
     try:
+        conn.execute("BEGIN IMMEDIATE;")
         cursor = conn.cursor()
         cursor.execute(f"INSERT OR IGNORE INTO {WHITELIST_TABLE_NAME} (guild_id, channel_id) VALUES (?, ?)", (guild_id, channel_id))
-        if cursor.rowcount > 0: conn.commit(); success = True; log.info(f"DB_WL_ADD: Whitelisted C:{channel_id} G:{guild_id}.")
-        else: log.warning(f"DB_WL_ADD: Already whitelisted C:{channel_id} G:{guild_id}.")
+        if cursor.rowcount > 0:
+            conn.commit(); success = True; log.info(f"DB_WL_ADD: Whitelisted C:{channel_id} G:{guild_id}.")
+        else:
+            log.warning(f"DB_WL_ADD: Already whitelisted C:{channel_id} G:{guild_id}.")
+            # No need to rollback if IGNORE worked as intended
     except Exception as e:
         log.error(f"DB_WL_ADD: Error G:{guild_id}, C:{channel_id}: {e}", exc_info=True)
-        try: conn.rollback()
-        except Exception as rb_e: log.error(f"DB_WL_ADD: Rollback failed: {rb_e}")
+        if conn: # Check connection before rollback attempt
+            try:
+                conn.rollback()
+                log.warning(f"DB_WL_ADD: Rolled back G:{guild_id}, C:{channel_id}.")
+            except Exception as rb_e:
+                log.error(f"DB_WL_ADD: Rollback failed: {rb_e}")
     finally: _close_connection(conn)
     return success
 
@@ -180,10 +208,15 @@ def remove_whitelist_channel(guild_id: int, channel_id: int) -> bool:
             conn.commit(); success = True; log.info(f"DB_WL_REMOVE: Removed C:{channel_id} G:{guild_id}.")
         else:
             log.warning(f"DB_WL_REMOVE: Not found C:{channel_id} G:{guild_id}.")
-            conn.rollback()
+            conn.rollback() # Rollback if nothing was deleted
     except Exception as e:
         log.error(f"DB_WL_REMOVE: Error G:{guild_id}, C:{channel_id}: {e}", exc_info=True)
-        if conn: try: conn.rollback() except Exception as rb_e: log.error(f"DB_WL_REMOVE: Rollback failed: {rb_e}")
+        if conn:
+             try:
+                 conn.rollback()
+                 log.warning(f"DB_WL_REMOVE: Rolled back G:{guild_id}, C:{channel_id}.")
+             except Exception as rb_e:
+                 log.error(f"DB_WL_REMOVE: Rollback failed: {rb_e}")
     finally: _close_connection(conn)
     return success
 

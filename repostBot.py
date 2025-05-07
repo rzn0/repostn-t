@@ -227,7 +227,7 @@ async def handle_repost(bot_instance: commands.Bot, repost_message: nextcord.Mes
     embed = nextcord.Embed(title=embed_title, description=f"{repost_message.author.mention} posted content similar to an earlier post.", color=embed_color, timestamp=repost_message.created_at)
     embed.add_field(name="Original Post", value=f"[Link]({original_link})", inline=True)
     embed.add_field(name="Original Poster", value=original_author_name, inline=True)
-    embed.add_field(name="Similarity", value=f"`{similarity_score}` (Thresh: `{SIMILARITY_THRESHOLD}`)", inline=True)
+    embed.add_field(name="Originality Score", value=f"`{similarity_score}` (Thresh: `{SIMILARITY_THRESHOLD}`)", inline=True)
     embed.add_field(name="Original Post Time", value=f"<t:{original_timestamp}:F> (<t:{original_timestamp}:R>)", inline=False)
     if alert_target_channel.id != repost_channel.id: embed.add_field(name="Detected In", value=repost_channel.mention, inline=False)
     embed.set_footer(text=f"Repost Bot | Repost Msg ID: {repost_message.id}")
