@@ -2,6 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C0C31F4CDE)
 
 A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, videos) within your server channels. It requires a one-time setup to designate an alert channel and allows whitelisting specific channels where reposts are permitted.
 
