@@ -1,7 +1,0 @@
-nextcord      # Or discord.py>=2.0.0 if you prefer that fork
-python-dotenv
-ImageHash
-Pillow       # Pillow is the image processing library used by ImageHash
-aiohttp      # For asynchronous HTTP requests
-opencv-python
-numpy
