@@ -1,8 +1,7 @@
-# Discord Repost Detector Bot a.k.a. Repostn't
+# Discord Repost Detector Bot
 
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C0C31F4CDE)
 
 A Python-based Discord bot designed to detect and manage reposted media (images, GIFs, videos) within your server channels. It requires a one-time setup to designate an alert channel and allows whitelisting specific channels where reposts are permitted.
 
@@ -21,8 +20,6 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
     *   Deletes the repost message from its original channel (requires `Manage Messages` permission there).
 *   **Database:** Stores media hashes (`media_hashes`), alert channel configuration (`guild_config`), and channel whitelist status (`channel_whitelist`) using SQLite.
 *   **Configurable:** Settings like hash sensitivity, file size limits, command prefix, and logging level can be adjusted via an environment file (`.env`).
-*   **Statistics:** Provides detailed statistics on bot activity, including reposts detected, top reposters, and top reposted channels.
-*   **Auto-Updating Stats Channel:** Can be configured to post live-updating statistics to a dedicated channel.
 
 ## Requirements
 
@@ -141,18 +138,6 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
 *   `unwhitelist [channel]` (Alias: `unwl`)
     *   **Usage:** Run in a channel (`!unwhitelist`) or specify one (`!unwhitelist #channel-name` or `!unwhitelist <channel_id>`).
     *   **Action:** Removes the target channel from the whitelist, re-enabling repost checks there.
-*   `setthreshold <value>`
-    *   **Usage:** `!setthreshold <value>` (e.g., `!setthreshold 5`).
-    *   **Action:** Sets a custom repost similarity threshold for the server (0-15, lower is stricter).
-*   `getthreshold` (Alias: `showthreshold`)
-    *   **Usage:** `!getthreshold`
-    *   **Action:** Shows the current repost similarity threshold for the server.
-*   `stats`
-    *   **Usage:** `!stats`
-    *   **Action:** Shows statistics about the bot's activity.
-*   `setstatschannel [channel]`
-    *   **Usage:** Run in a channel (`!setstatschannel`) or specify one (`!setstatschannel #channel-name`).
-    *   **Action:** Designates a channel for the auto-updating stats embed.
 
 ## How it Works (Briefly)
 

@@ -13,8 +13,6 @@ DB_PATH = os.path.join(DB_DIR, DB_NAME)
 HASH_TABLE_NAME = "media_hashes"
 CONFIG_TABLE_NAME = "guild_config"
 WHITELIST_TABLE_NAME = "channel_whitelist"
-REPOST_LOG_TABLE_NAME = "repost_log"
-STATS_CHANNEL_TABLE_NAME = "stats_channel_config"
 
 log = logging.getLogger(__name__)
 
@@ -71,20 +69,6 @@ def setup_database():
         cursor.execute(f""" CREATE TABLE IF NOT EXISTS {HASH_TABLE_NAME} ( id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL UNIQUE, author_id INTEGER NOT NULL, hash_hex TEXT NOT NULL, media_url TEXT, timestamp INTEGER NOT NULL ); """)
         cursor.execute(f""" CREATE TABLE IF NOT EXISTS {CONFIG_TABLE_NAME} ( guild_id INTEGER PRIMARY KEY, alert_channel_id INTEGER NULLABLE ); """)
         cursor.execute(f""" CREATE TABLE IF NOT EXISTS {WHITELIST_TABLE_NAME} ( guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, PRIMARY KEY (guild_id, channel_id) ); """)
-        cursor.execute(f""" CREATE TABLE IF NOT EXISTS {REPOST_LOG_TABLE_NAME} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id INTEGER NOT NULL,
-            reposter_id INTEGER NOT NULL,
-            original_message_id INTEGER NOT NULL,
-            repost_message_id INTEGER NOT NULL,
-            repost_channel_id INTEGER NOT NULL,
-            timestamp INTEGER NOT NULL
-        ); """)
-        cursor.execute(f""" CREATE TABLE IF NOT EXISTS {STATS_CHANNEL_TABLE_NAME} (
-            guild_id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            message_id INTEGER
-        ); """)
         log.info("DB_SETUP: Base tables ensured.")
 
         # --- Add similarity_threshold column to guild_config if needed ---
@@ -293,86 +277,6 @@ def is_channel_whitelisted(guild_id: int, channel_id: int) -> bool:
     except Exception as e: log.error(f"DB_WL_CHECK: Error G:{guild_id}, C:{channel_id}: {e}", exc_info=True)
     finally: _close_connection(conn)
     return whitelisted
-
-def log_repost(guild_id: int, reposter_id: int, original_message_id: int, repost_message_id: int, repost_channel_id: int):
-    conn = _get_connection()
-    if not conn: log.error(f"DB_LOG_REPOST: Failed connection G:{guild_id}."); return
-    timestamp = int(time.time())
-    try:
-        conn.execute("BEGIN;")
-        cursor = conn.cursor()
-        cursor.execute(f"INSERT INTO {REPOST_LOG_TABLE_NAME} (guild_id, reposter_id, original_message_id, repost_message_id, repost_channel_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                       (guild_id, reposter_id, original_message_id, repost_message_id, repost_channel_id, timestamp))
-        conn.commit(); log.info(f"DB_LOG_REPOST: Logged repost in G:{guild_id}.")
-    except Exception as e:
-        log.error(f"DB_LOG_REPOST: Error G:{guild_id}: {e}", exc_info=True)
-        if conn:
-            try: conn.rollback()
-            except Exception as rb_e: log.error(f"DB_LOG_REPOST: Rollback failed: {rb_e}")
-    finally: _close_connection(conn)
-
-def get_stats(guild_id: int) -> Dict[str, Any]:
-    conn = _get_connection()
-    if not conn: log.error(f"DB_GET_STATS: Failed connection G:{guild_id}."); return {}
-    stats = {}
-    try:
-        cursor = conn.cursor()
-        
-        # Total media processed
-        cursor.execute(f"SELECT COUNT(*) FROM {HASH_TABLE_NAME} WHERE guild_id = ?", (guild_id,))
-        stats["total_media_processed"] = cursor.fetchone()[0]
-        
-        # Total reposts detected
-        cursor.execute(f"SELECT COUNT(*) FROM {REPOST_LOG_TABLE_NAME} WHERE guild_id = ?", (guild_id,))
-        stats["total_reposts_detected"] = cursor.fetchone()[0]
-        
-        # Top 3 reposters
-        cursor.execute(f"SELECT reposter_id, COUNT(*) as repost_count FROM {REPOST_LOG_TABLE_NAME} WHERE guild_id = ? GROUP BY reposter_id ORDER BY repost_count DESC LIMIT 3", (guild_id,))
-        stats["top_reposters"] = cursor.fetchall()
-        
-        # Top 3 reposted channels
-        cursor.execute(f"SELECT repost_channel_id, COUNT(*) as repost_count FROM {REPOST_LOG_TABLE_NAME} WHERE guild_id = ? GROUP BY repost_channel_id ORDER BY repost_count DESC LIMIT 3", (guild_id,))
-        stats["top_reposted_channels"] = cursor.fetchall()
-        
-    except Exception as e:
-        log.error(f"DB_GET_STATS: Error G:{guild_id}: {e}", exc_info=True)
-    finally:
-        _close_connection(conn)
-    return stats
-
-def set_stats_channel(guild_id: int, channel_id: int, message_id: int):
-    conn = _get_connection()
-    if not conn: log.error(f"DB_SET_STATS_CHANNEL: Failed connection G:{guild_id}."); return False
-    success = False
-    try:
-        conn.execute("BEGIN IMMEDIATE;")
-        cursor = conn.cursor()
-        cursor.execute(f"INSERT OR REPLACE INTO {STATS_CHANNEL_TABLE_NAME} (guild_id, channel_id, message_id) VALUES (?, ?, ?)", (guild_id, channel_id, message_id))
-        conn.commit(); success = True
-        log.info(f"DB_SET_STATS_CHANNEL: Stats channel for G:{guild_id} set to C:{channel_id} M:{message_id}.")
-    except Exception as e:
-        log.error(f"DB_SET_STATS_CHANNEL: Error G:{guild_id}: {e}", exc_info=True)
-        if conn:
-            try: conn.rollback()
-            except Exception as rb_e: log.error(f"DB_SET_STATS_CHANNEL: Rollback failed: {rb_e}")
-    finally: _close_connection(conn)
-    return success
-
-def get_stats_channel(guild_id: int) -> Optional[Dict[str, int]]:
-    conn = _get_connection()
-    if not conn: log.error(f"DB_GET_STATS_CHANNEL: Failed connection G:{guild_id}."); return None
-    result = None
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT channel_id, message_id FROM {STATS_CHANNEL_TABLE_NAME} WHERE guild_id = ?", (guild_id,))
-        row = cursor.fetchone()
-        if row:
-            result = {"channel_id": row["channel_id"], "message_id": row["message_id"]}
-    except Exception as e:
-        log.error(f"DB_GET_STATS_CHANNEL: Error G:{guild_id}: {e}", exc_info=True)
-    finally: _close_connection(conn)
-    return result
-
 
 if __name__ == "__main__":
     print("Attempting to run database setup directly...")

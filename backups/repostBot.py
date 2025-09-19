@@ -1,6 +1,6 @@
 # repostBot.py
 import nextcord
-from nextcord.ext import commands, tasks
+from nextcord.ext import commands
 import os
 import io
 import logging
@@ -114,7 +114,6 @@ async def on_ready():
     try: await bot.change_presence(activity=nextcord.Activity(type=nextcord.ActivityType.watching, name="for reposts"))
     except Exception as e: log.error(f"Failed to set presence: {e}")
     log.info(">>>> Repost Detector Bot is online and ready! <<<<")
-    update_stats_task.start()
 
 @bot.event
 async def on_disconnect(): log.warning("BOT: Disconnected from Discord Gateway.")
@@ -250,8 +249,6 @@ async def handle_repost(bot_instance: commands.Bot, repost_message: nextcord.Mes
     if can_delete_repost:
         try: await repost_message.delete()
         except Exception as e: log.error(f"HANDLE_REPOST: Error deleting repost {repost_message.id}: {e}", exc_info=True)
-
-    database.log_repost(guild_id, repost_message.author.id, original_post_info['message_id'], repost_message.id, repost_channel.id)
 
 async def process_media(bot_instance: commands.Bot, message: nextcord.Message, media_url: str, source_description: str, media_type: str):
     task_id = f"MsgID {message.id} ({media_type} via {source_description})"; log.info(f">>> PROCESS_MEDIA [{task_id}]: START")
@@ -411,205 +408,6 @@ async def get_threshold_command(ctx: commands.Context):
         await ctx.reply(f"ℹ️ Current similarity threshold for this server is `{guild_threshold}` (higher is stricter).")
     else:
         await ctx.reply(f"ℹ️ This server is using the global default similarity threshold: `{GLOBAL_SIMILARITY_THRESHOLD}` (higher is stricter).")
-
-@bot.command(name="stats", help="Show statistics about the bot's activity.")
-@commands.guild_only()
-async def stats_command(ctx: commands.Context):
-    stats = database.get_stats(ctx.guild.id)
-    if not stats:
-        await ctx.reply("❌ Could not retrieve statistics."); return
-
-    embed = nextcord.Embed(title=f"🤖 Repost Bot Statistics for {ctx.guild.name}", color=nextcord.Color.blue())
-    embed.add_field(name="Total Media Processed", value=f"`{stats.get('total_media_processed', 0)}`", inline=True)
-    embed.add_field(name="Reposts Detected", value=f"`{stats.get('total_reposts_detected', 0)}`", inline=True)
-
-    repost_rate = 0
-    if stats.get('total_media_processed', 0) > 0:
-        repost_rate = (stats.get('total_reposts_detected', 0) / stats.get('total_media_processed', 0)) * 100
-    embed.add_field(name="Repost Rate", value=f"`{repost_rate:.2f}%`", inline=True)
-
-    top_reposters = stats.get("top_reposters")
-    if top_reposters:
-        value = ""
-        for i, (reposter_id, count) in enumerate(top_reposters):
-            user = await bot.fetch_user(reposter_id)
-            value += f"{i+1}. {user.mention}: {count} reposts\n"
-        embed.add_field(name="🏆 Top Reposters", value=value, inline=False)
-
-    top_channels = stats.get("top_reposted_channels")
-    if top_channels:
-        value = ""
-        for i, (channel_id, count) in enumerate(top_channels):
-            channel = bot.get_channel(channel_id)
-            value += f"{i+1}. {channel.mention}: {count} reposts\n"
-        embed.add_field(name="📢 Top Reposted Channels", value=value, inline=False)
-
-    guild_threshold = database.get_guild_similarity_threshold(ctx.guild.id)
-    embed.set_footer(text=f"Bot is using a similarity threshold of `{guild_threshold or GLOBAL_SIMILARITY_THRESHOLD}`.")
-
-    await ctx.reply(embed=embed)
-
-async def update_stats_for_guild(guild_id: int):
-    stats_channel_info = database.get_stats_channel(guild_id)
-    if not stats_channel_info: return
-
-    channel_id = stats_channel_info.get("channel_id")
-    message_id = stats_channel_info.get("message_id")
-    if not channel_id or not message_id: return
-
-    try:
-        channel = await bot.fetch_channel(channel_id)
-        message = await channel.fetch_message(message_id)
-    except (nextcord.NotFound, nextcord.Forbidden):
-        log.warning(f"STATS_UPDATE: Could not find channel or message for guild {guild_id}. Clearing from DB.")
-        database.set_stats_channel(guild_id, None, None)
-        return
-    except Exception as e:
-        log.error(f"STATS_UPDATE: Error fetching channel/message for guild {guild_id}: {e}")
-        return
-
-    stats = database.get_stats(guild_id)
-    if not stats:
-        log.warning(f"STATS_UPDATE: Could not retrieve stats for guild {guild_id}.")
-        return
-
-    guild = bot.get_guild(guild_id)
-    embed = nextcord.Embed(title=f"📊 Live Statistics for {guild.name}", color=nextcord.Color.green())
-    embed.add_field(name="Total Media Processed", value=f"`{stats.get('total_media_processed', 0)}`", inline=True)
-    embed.add_field(name="Reposts Detected", value=f"`{stats.get('total_reposts_detected', 0)}`", inline=True)
-
-    repost_rate = 0
-    if stats.get('total_media_processed', 0) > 0:
-        repost_rate = (stats.get('total_reposts_detected', 0) / stats.get('total_media_processed', 0)) * 100
-    embed.add_field(name="Repost Rate", value=f"`{repost_rate:.2f}%`", inline=True)
-
-    top_reposters = stats.get("top_reposters")
-    if top_reposters:
-        value = ""
-        for i, (reposter_id, count) in enumerate(top_reposters):
-            try:
-                user = await bot.fetch_user(reposter_id)
-                value += f"{i+1}. {user.mention}: {count} reposts\n"
-            except nextcord.NotFound:
-                value += f"{i+1}. User ID {reposter_id}: {count} reposts\n"
-        embed.add_field(name="🏆 Top Reposters", value=value, inline=False)
-
-    top_channels = stats.get("top_reposted_channels")
-    if top_channels:
-        value = ""
-        for i, (channel_id, count) in enumerate(top_channels):
-            channel = bot.get_channel(channel_id)
-            if channel:
-                value += f"{i+1}. {channel.mention}: {count} reposts\n"
-            else:
-                value += f"{i+1}. Channel ID {channel_id}: {count} reposts\n"
-        embed.add_field(name="📢 Top Reposted Channels", value=value, inline=False)
-
-    guild_threshold = database.get_guild_similarity_threshold(guild.id)
-    embed.set_footer(text=f"Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC | Threshold: {guild_threshold or GLOBAL_SIMILARITY_THRESHOLD}")
-
-    try:
-        await message.edit(embed=embed)
-        log.info(f"STATS_UPDATE: Updated stats for guild {guild.id}")
-    except Exception as e:
-        log.error(f"STATS_UPDATE: Error updating stats for guild {guild.id}: {e}")
-
-@tasks.loop(minutes=15)
-async def update_stats_task():
-    for guild in bot.guilds:
-        stats_channel_info = database.get_stats_channel(guild.id)
-        if not stats_channel_info: continue
-
-        channel_id = stats_channel_info.get("channel_id")
-        message_id = stats_channel_info.get("message_id")
-        if not channel_id or not message_id: continue
-
-        try:
-            channel = await bot.fetch_channel(channel_id)
-            message = await channel.fetch_message(message_id)
-        except (nextcord.NotFound, nextcord.Forbidden):
-            log.warning(f"STATS_TASK: Could not find channel or message for guild {guild.id}. Clearing from DB.")
-            database.set_stats_channel(guild.id, None, None)
-            continue
-        except Exception as e:
-            log.error(f"STATS_TASK: Error fetching channel/message for guild {guild.id}: {e}")
-            continue
-
-        stats = database.get_stats(guild.id)
-        if not stats:
-            log.warning(f"STATS_TASK: Could not retrieve stats for guild {guild.id}.")
-            continue
-
-        embed = nextcord.Embed(title=f"📊 Live Statistics for {guild.name}", color=nextcord.Color.green())
-        embed.add_field(name="Total Media Processed", value=f"`{stats.get('total_media_processed', 0)}`", inline=True)
-        embed.add_field(name="Reposts Detected", value=f"`{stats.get('total_reposts_detected', 0)}`", inline=True)
-
-        repost_rate = 0
-        if stats.get('total_media_processed', 0) > 0:
-            repost_rate = (stats.get('total_reposts_detected', 0) / stats.get('total_media_processed', 0)) * 100
-        embed.add_field(name="Repost Rate", value=f"`{repost_rate:.2f}%`", inline=True)
-
-        top_reposters = stats.get("top_reposters")
-        if top_reposters:
-            value = ""
-            for i, (reposter_id, count) in enumerate(top_reposters):
-                try:
-                    user = await bot.fetch_user(reposter_id)
-                    value += f"{i+1}. {user.mention}: {count} reposts\n"
-                except nextcord.NotFound:
-                    value += f"{i+1}. User ID {reposter_id}: {count} reposts\n"
-            embed.add_field(name="🏆 Top Reposters", value=value, inline=False)
-
-        top_channels = stats.get("top_reposted_channels")
-        if top_channels:
-            value = ""
-            for i, (channel_id, count) in enumerate(top_channels):
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    value += f"{i+1}. {channel.mention}: {count} reposts\n"
-                else:
-                    value += f"{i+1}. Channel ID {channel_id}: {count} reposts\n"
-            embed.add_field(name="📢 Top Reposted Channels", value=value, inline=False)
-
-        guild_threshold = database.get_guild_similarity_threshold(guild.id)
-        embed.set_footer(text=f"Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC | Threshold: {guild_threshold or GLOBAL_SIMILARITY_THRESHOLD}")
-
-        try:
-            await message.edit(embed=embed)
-            log.info(f"STATS_TASK: Updated stats for guild {guild.id}")
-        except Exception as e:
-            log.error(f"STATS_TASK: Error updating stats for guild {guild.id}: {e}")
-
-@update_stats_task.before_loop
-async def before_update_stats_task():
-    await bot.wait_until_ready()
-
-@bot.command(name="setstatschannel", help="Set a channel for auto-updating stats. Needs 'Manage Server'.")
-@commands.guild_only()
-@commands.has_permissions(manage_guild=True)
-async def set_stats_channel_command(ctx: commands.Context, channel: Optional[nextcord.TextChannel] = None):
-    target_channel = channel or ctx.channel
-    if not isinstance(target_channel, nextcord.TextChannel):
-        await ctx.reply("⚠️ Please specify a valid text channel.", delete_after=30); return
-
-    try:
-        perms = target_channel.permissions_for(ctx.guild.me)
-        if not perms.send_messages or not perms.embed_links:
-            await ctx.reply(f"⚠️ I need `Send Messages` and `Embed Links` permissions in {target_channel.mention}."); return
-    except Exception as e:
-        await ctx.reply("❌ Error checking permissions."); log.error(f"CMD_SETSTATSCHANNEL Perm check failed: {e}"); return
-
-    try:
-        stats_embed = nextcord.Embed(title="📊 Live Statistics", description="Initializing...", color=nextcord.Color.green())
-        stats_message = await target_channel.send(embed=stats_embed)
-    except Exception as e:
-        await ctx.reply(f"❌ Could not send initial stats message in {target_channel.mention}."); log.error(f"CMD_SETSTATSCHANNEL Send failed: {e}"); return
-
-    if database.set_stats_channel(ctx.guild.id, target_channel.id, stats_message.id):
-        await ctx.reply(f"✅ Stats channel set to {target_channel.mention}. The stats message will update automatically.")
-        await update_stats_for_guild(ctx.guild.id)
-    else:
-        await ctx.reply("❌ Error saving stats channel setting.")
 
 
 async def shutdown_signal_handler(bot_instance: commands.Bot, signal_type: signal.Signals):
