@@ -16,6 +16,8 @@ import signal
 import tempfile
 import numpy as np
 import shutil
+import re
+import json
 
 _initial_log = logging.getLogger("InitialSetup")
 try:
@@ -190,6 +192,8 @@ def _blocking_video_multi_hash_cv2(video_bytes: bytes, hash_size_local: int, bla
                 except Exception as e_hash: log.error(f"CV2 Hash: Error hashing '{frame_name}' frame {target_idx}: {e_hash}", exc_info=True)
             else: log.warning(f"CV2 Hash: Failed read/invalid '{frame_name}' frame {target_idx}.")
             processed_indices.add(target_idx)
+    except cv2.error as e:
+        log.error(f"CV2 Hash: OpenCV error during video processing: {e}", exc_info=True)
     except Exception as e: log.error(f"CV2 Hash: Error during video processing: {e}", exc_info=True)
     finally:
         if cap: cap.release()
@@ -253,14 +257,55 @@ async def handle_repost(bot_instance: commands.Bot, repost_message: nextcord.Mes
 
     database.log_repost(guild_id, repost_message.author.id, original_post_info['message_id'], repost_message.id, repost_channel.id)
 
+async def get_video_codec(video_bytes: bytes) -> Optional[str]:
+    try:
+        with tempfile.NamedTemporaryFile(prefix="repvid_", suffix=".tmp", delete=False) as tmp_file:
+            tmp_filepath = tmp_file.name
+            tmp_file.write(video_bytes)
+
+        command = f"ffprobe -v quiet -print_format json -show_streams \"{tmp_filepath}\""
+        process = await asyncio.create_subprocess_shell(
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            log.error(f"FFPROBE: Error running ffprobe: {stderr.decode()}")
+            return None
+
+        streams = json.loads(stdout).get("streams", [])
+        for stream in streams:
+            if stream.get("codec_type") == "video":
+                return stream.get("codec_name")
+
+        return None
+
+    except Exception as e:
+        log.error(f"FFPROBE: Error getting video codec: {e}", exc_info=True)
+        return None
+    finally:
+        if tmp_filepath and os.path.exists(tmp_filepath):
+            try:
+                os.remove(tmp_filepath)
+            except Exception as e_del:
+                log.error(f"FFPROBE: Unexpected error deleting temp file {tmp_filepath}: {e_del}")
+
 async def process_media(bot_instance: commands.Bot, message: nextcord.Message, media_url: str, source_description: str, media_type: str):
     task_id = f"MsgID {message.id} ({media_type} via {source_description})"; log.info(f">>> PROCESS_MEDIA [{task_id}]: START")
     if not message.guild: return
     try: message = await message.channel.fetch_message(message.id)
     except Exception: log.warning(f"PROCESS_MEDIA [{task_id}]: Msg deleted/inaccessible."); return
     if not message or not message.guild: return
+
     media_bytes = await download_media(bot_instance, media_url)
     if not media_bytes: log.warning(f"PROCESS_MEDIA [{task_id}]: Download failed."); return
+
+    if media_type == 'video':
+        codec = await get_video_codec(media_bytes)
+        if codec == "av1":
+            log.info(f"PROCESS_MEDIA [{task_id}]: Skipping AV1 video.")
+            return
+
     current_hashes: Optional[Union[imagehash.ImageHash, List[imagehash.ImageHash]]] = None
     if media_type == 'image': current_hashes = await get_image_phash(media_bytes)
     elif media_type == 'video': current_hashes = await get_video_multi_frame_phashes(media_bytes)
@@ -288,7 +333,8 @@ async def on_message(message: nextcord.Message):
     if message.author.bot or not message.guild: return
     if message.content.startswith(bot.command_prefix): await bot.process_commands(message); return
     if database.is_channel_whitelisted(message.guild.id, message.channel.id): return
-    if not message.attachments and not message.embeds: return
+    if not message.attachments and not message.embeds and not re.search(r'(https?://[\S]+)', message.content):
+        return
     if message.type not in (nextcord.MessageType.default, nextcord.MessageType.reply): return
     if not isinstance(message.channel, (nextcord.TextChannel, nextcord.Thread, nextcord.VoiceChannel)): return
     try:
@@ -318,6 +364,17 @@ async def on_message(message: nextcord.Message):
         except Exception as url_parse_err: log.warning(f"ON_MESSAGE [{message.id}]: Failed parse embed URL '{media_url}': {url_parse_err}"); continue
         if final_media_type == 'video' and not OPENCV_AVAILABLE: continue
         if final_media_type: tasks_to_create.append(process_media(bot, message, media_url, f"{embed.type or 'unk'} emb", final_media_type)); processed_urls.add(media_url)
+
+    urls = re.findall(r'(https?://[\S]+)', message.content)
+    for url in urls:
+        if url in processed_urls: continue
+        try:
+            file_ext = os.path.splitext(url.split('?')[0])[1].lower()
+            media_type = None
+            if file_ext in SUPPORTED_IMAGE_EXTENSIONS: media_type = 'image'
+            elif file_ext in SUPPORTED_VIDEO_EXTENSIONS and OPENCV_AVAILABLE: media_type = 'video'
+            if media_type: tasks_to_create.append(process_media(bot, message, url, f"link", media_type)); processed_urls.add(url)
+        except Exception as url_parse_err: log.warning(f"ON_MESSAGE [{message.id}]: Failed parse URL '{url}': {url_parse_err}"); continue
 
     if tasks_to_create:
         log.info(f"ON_MESSAGE [{message.id}]: Running {len(tasks_to_create)} media tasks...")

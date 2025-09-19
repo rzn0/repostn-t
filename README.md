@@ -177,6 +177,11 @@ A Python-based Discord bot designed to detect and manage reposted media (images,
 *   **Setup Requirement:** Core functionality paused until `!setalertchannel` is used.
 *   **Whitelist Management:** Managed per-channel via commands.
 
+## Troubleshooting
+
+*   **AV1 Decoding Warning:** You may see a warning in the console like `[av1 @ 0x7f6c006f80] Your platform doesn't suppport hardware accelerated AV1 decoding.`. This is a non-critical warning from FFmpeg (used by OpenCV) indicating that it's falling back to software decoding for AV1 videos. The bot will still work, but video processing for AV1 videos may be slower.
+*   **AV1 Video Skipping:** To prevent errors with problematic AV1 videos, the bot will automatically skip any video that it detects as being encoded with the AV1 codec. This is a temporary measure to ensure the bot's stability. Support for AV1 videos may be added in the future.
+
 ## Contributing
 
 Contributions welcome! Please submit pull requests or open issues.
